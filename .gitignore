@@ -1,0 +1,9 @@
+.env
+.env.production
+/.idea
+/.vscode
+/AGENTS.md
+/.ai/
+/.junie/
+/.codex/
+/.agents/

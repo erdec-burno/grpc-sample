@@ -1,0 +1,9 @@
+services:
+  laravel-app:
+    environment:
+      OTEL_SERVICE_NAME: laravel-app
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+  grpc-user-service:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318

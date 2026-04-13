@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Grpc\ChannelCredentials;
+use User\V1\CreateUserRequest;
 use User\V1\GetUserRequest;
 use User\V1\UserServiceClient;
 
@@ -26,6 +27,42 @@ class UserGrpcService
         $request->setId($id);
 
         [$response, $status] = $this->client->GetUser($request)->wait();
+
+        if ($status->code !== \Grpc\STATUS_OK) {
+            return [
+                'ok' => false,
+                'error' => $status->details ?: 'gRPC request failed',
+                'code' => $status->code,
+            ];
+        }
+
+        $user = $response->getUser();
+
+        if ($user === null) {
+            return [
+                'ok' => false,
+                'error' => 'User payload is empty',
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'data' => [
+                'id' => $user->getId(),
+                'name' => $user->getName(),
+                'email' => $user->getEmail(),
+                'status' => $user->getStatus(),
+            ],
+        ];
+    }
+
+    public function createUser(string $name, string $email): array
+    {
+        $request = new CreateUserRequest();
+        $request->setName($name);
+        $request->setEmail($email);
+
+        [$response, $status] = $this->client->CreateUser($request)->wait();
 
         if ($status->code !== \Grpc\STATUS_OK) {
             return [

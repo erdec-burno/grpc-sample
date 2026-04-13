@@ -47,6 +47,10 @@ function firstMetadataValue(call, key) {
   return values.length > 0 ? String(values[0]) : null;
 }
 
+function elapsedMs(start) {
+  return Number(((performance.now() - start)).toFixed(3));
+}
+
 function withRpcSpan(call, spanName, attributes, handler) {
   const parentContext = propagation.extract(context.active(), metadataCarrier(call), metadataGetter);
   const traceparent = firstMetadataValue(call, 'traceparent');
@@ -63,6 +67,7 @@ function withRpcSpan(call, spanName, attributes, handler) {
 
   return context.with(parentContext, () => {
     const span = tracer.startSpan(spanName, { attributes: spanAttributes });
+    const overallStart = performance.now();
 
     return context.with(trace.setSpan(parentContext, span), () => {
       try {
@@ -77,8 +82,8 @@ function withRpcSpan(call, spanName, attributes, handler) {
           })
         );
 
-        return handler(span);
-      } finally {
+        const result = handler(span);
+
         console.log(
           JSON.stringify({
             level: 'info',
@@ -86,8 +91,30 @@ function withRpcSpan(call, spanName, attributes, handler) {
             span: spanName,
             traceparent,
             correlation_id: correlationId,
+            latency_breakdown_ms: {
+              total: elapsedMs(overallStart),
+            },
           })
         );
+
+        return result;
+      } catch (error) {
+        console.log(
+          JSON.stringify({
+            level: 'error',
+            message: 'grpc request failed',
+            span: spanName,
+            traceparent,
+            correlation_id: correlationId,
+            error: error.message,
+            latency_breakdown_ms: {
+              total: elapsedMs(overallStart),
+            },
+          })
+        );
+
+        throw error;
+      } finally {
         span.end();
       }
     });
@@ -106,15 +133,47 @@ server.addService(userPackage.UserService.service, {
         'user.id': call.request.id,
       },
       (span) => {
+        const lookupStart = performance.now();
         const user = users.get(call.request.id);
+        const lookupMs = elapsedMs(lookupStart);
+
         if (!user) {
+          span.setAttribute('latency.lookup_ms', lookupMs);
           span.setAttribute('rpc.grpc.status_code', grpc.status.NOT_FOUND);
           span.setStatus({ code: SpanStatusCode.ERROR, message: 'User not found' });
+          console.log(
+            JSON.stringify({
+              level: 'warning',
+              message: 'grpc business failure',
+              span: 'UserService/GetUser',
+              traceparent: firstMetadataValue(call, 'traceparent'),
+              correlation_id: firstMetadataValue(call, 'x-correlation-id'),
+              grpc_status_code: grpc.status.NOT_FOUND,
+              latency_breakdown_ms: {
+                user_lookup: lookupMs,
+              },
+            })
+          );
           return callback({ code: grpc.status.NOT_FOUND, message: 'User not found' });
         }
 
+        span.setAttribute('latency.lookup_ms', lookupMs);
         span.setAttribute('rpc.grpc.status_code', grpc.status.OK);
         span.setStatus({ code: SpanStatusCode.OK });
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            message: 'grpc business success',
+            span: 'UserService/GetUser',
+            traceparent: firstMetadataValue(call, 'traceparent'),
+            correlation_id: firstMetadataValue(call, 'x-correlation-id'),
+            grpc_status_code: grpc.status.OK,
+            user_id: user.id,
+            latency_breakdown_ms: {
+              user_lookup: lookupMs,
+            },
+          })
+        );
         callback(null, { user });
       }
     );
@@ -131,17 +190,39 @@ server.addService(userPackage.UserService.service, {
         'user.name.length': call.request.name.length,
       },
       (span) => {
+        const buildStart = performance.now();
         const user = {
           id: idCounter++,
           name: call.request.name,
           email: call.request.email,
           status: 1,
         };
+        const buildMs = elapsedMs(buildStart);
 
+        const storeStart = performance.now();
         users.set(user.id, user);
+        const storeMs = elapsedMs(storeStart);
+
+        span.setAttribute('latency.user_build_ms', buildMs);
+        span.setAttribute('latency.user_store_ms', storeMs);
         span.setAttribute('user.id', user.id);
         span.setAttribute('rpc.grpc.status_code', grpc.status.OK);
         span.setStatus({ code: SpanStatusCode.OK });
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            message: 'grpc business success',
+            span: 'UserService/CreateUser',
+            traceparent: firstMetadataValue(call, 'traceparent'),
+            correlation_id: firstMetadataValue(call, 'x-correlation-id'),
+            grpc_status_code: grpc.status.OK,
+            user_id: user.id,
+            latency_breakdown_ms: {
+              user_build: buildMs,
+              user_store: storeMs,
+            },
+          })
+        );
         callback(null, { user });
       }
     );

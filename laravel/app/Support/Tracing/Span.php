@@ -9,26 +9,31 @@ class Span
     public static function run(string $name, callable $fn, array $meta = [])
     {
         $start = microtime(true);
+        $context = [
+            'span.name' => $name,
+            ...$meta,
+        ];
 
         try {
             $result = $fn();
-            $duration = (microtime(true) - $start) * 1000;
+            $duration = round((microtime(true) - $start) * 1000, 3);
 
-            Log::info('span', [
-                'name' => $name,
-                'duration_ms' => $duration,
-                ...$meta,
+            Log::info('span.completed', [
+                ...$context,
+                'span.duration_ms' => $duration,
+                'span.status' => 'ok',
             ]);
 
             return $result;
         } catch (\Throwable $e) {
-            $duration = (microtime(true) - $start) * 1000;
+            $duration = round((microtime(true) - $start) * 1000, 3);
 
-            Log::error('span_error', [
-                'name' => $name,
-                'duration_ms' => $duration,
-                'error' => $e->getMessage(),
-                ...$meta,
+            Log::error('span.failed', [
+                ...$context,
+                'span.duration_ms' => $duration,
+                'span.status' => 'error',
+                'error.message' => $e->getMessage(),
+                'error.type' => $e::class,
             ]);
 
             throw $e;

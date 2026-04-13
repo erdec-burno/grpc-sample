@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Support\Grpc\CircuitBreaker;
 use App\Support\Grpc\GrpcExecutor;
 use App\Support\Grpc\RetryPolicy;
+use App\Support\Tracing\Span;
 use Grpc\ChannelCredentials;
 use Illuminate\Support\Facades\Log;
 use User\V1\CreateUserRequest;
@@ -26,8 +27,17 @@ class UserGrpcService
         $this->executor = new GrpcExecutor(
             new RetryPolicy(3, 100),
             new CircuitBreaker(3, 5),
-            2000 // timeout ms
+            2000
         );
+    }
+
+    private function contextMeta(array $meta = []): array
+    {
+        return [
+            'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
+            'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
+            ...$meta,
+        ];
     }
 
     private function metadata(): array
@@ -45,119 +55,196 @@ class UserGrpcService
         return $metadata;
     }
 
+    private function elapsedMs(float $start): float
+    {
+        return round((microtime(true) - $start) * 1000, 3);
+    }
+
     public function getUser(int $id): array
     {
-        return $this->executor->execute(function () use ($id) {
-            Log::info('grpc request started', [
-                'rpc.service' => 'user.v1.UserService',
-                'rpc.method' => 'GetUser',
-                'user.id' => $id,
-                'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-            ]);
+        return Span::run('laravel.grpc.user_service.get_user.total', function () use ($id) {
+            return $this->executor->execute(function () use ($id) {
+                $overallStart = microtime(true);
 
-            $request = new GetUserRequest();
-            $request->setId($id);
-
-            [$response, $status] = $this->client->GetUser($request, $this->metadata())->wait();
-
-            if ($status->code !== \Grpc\STATUS_OK) {
-                Log::warning('grpc request failed', [
+                Log::info('grpc request started', $this->contextMeta([
                     'rpc.service' => 'user.v1.UserService',
                     'rpc.method' => 'GetUser',
                     'user.id' => $id,
-                    'grpc.status_code' => $status->code,
-                    'grpc.error' => $status->details,
-                    'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                    'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-                ]);
+                ]));
 
-                return [
-                    'ok' => false,
-                    'error' => $status->details,
-                    'code' => $status->code,
-                ];
-            }
+                $metadataStart = microtime(true);
+                $metadata = Span::run('laravel.grpc.user_service.get_user.metadata', fn () => $this->metadata());
+                $metadataMs = $this->elapsedMs($metadataStart);
 
-            $user = $response->getUser();
+                $request = new GetUserRequest();
+                $request->setId($id);
 
-            Log::info('grpc request completed', [
-                'rpc.service' => 'user.v1.UserService',
-                'rpc.method' => 'GetUser',
-                'user.id' => $user?->getId(),
-                'grpc.status_code' => \Grpc\STATUS_OK,
-                'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-            ]);
+                $grpcCallStart = microtime(true);
+                [$response, $status] = Span::run(
+                    'laravel.grpc.user_service.get_user.call',
+                    fn () => $this->client->GetUser($request, $metadata)->wait(),
+                    $this->contextMeta([
+                        'rpc.service' => 'user.v1.UserService',
+                        'rpc.method' => 'GetUser',
+                    ])
+                );
+                $grpcCallMs = $this->elapsedMs($grpcCallStart);
 
-            return [
-                'ok' => true,
-                'data' => [
-                    'id' => $user->getId(),
-                    'name' => $user->getName(),
-                    'email' => $user->getEmail(),
-                    'status' => $user->getStatus(),
-                ],
-            ];
-        });
+                if ($status->code !== \Grpc\STATUS_OK) {
+                    Log::warning('grpc request failed', $this->contextMeta([
+                        'rpc.service' => 'user.v1.UserService',
+                        'rpc.method' => 'GetUser',
+                        'user.id' => $id,
+                        'grpc.status_code' => $status->code,
+                        'grpc.error' => $status->details,
+                        'latency_breakdown_ms' => [
+                            'metadata' => $metadataMs,
+                            'grpc_call' => $grpcCallMs,
+                            'total' => $this->elapsedMs($overallStart),
+                        ],
+                    ]));
+
+                    return [
+                        'ok' => false,
+                        'error' => $status->details,
+                        'code' => $status->code,
+                    ];
+                }
+
+                $mapStart = microtime(true);
+                $result = Span::run('laravel.grpc.user_service.get_user.map_response', function () use ($response) {
+                    $user = $response->getUser();
+
+                    return [
+                        'ok' => true,
+                        'data' => [
+                            'id' => $user->getId(),
+                            'name' => $user->getName(),
+                            'email' => $user->getEmail(),
+                            'status' => $user->getStatus(),
+                        ],
+                    ];
+                });
+                $mapMs = $this->elapsedMs($mapStart);
+
+                Log::info('grpc request completed', $this->contextMeta([
+                    'rpc.service' => 'user.v1.UserService',
+                    'rpc.method' => 'GetUser',
+                    'user.id' => $result['data']['id'] ?? null,
+                    'grpc.status_code' => \Grpc\STATUS_OK,
+                    'latency_breakdown_ms' => [
+                        'metadata' => $metadataMs,
+                        'grpc_call' => $grpcCallMs,
+                        'response_map' => $mapMs,
+                        'total' => $this->elapsedMs($overallStart),
+                    ],
+                ]));
+
+                return $result;
+            });
+        }, $this->contextMeta([
+            'rpc.service' => 'user.v1.UserService',
+            'rpc.method' => 'GetUser',
+            'user.id' => $id,
+        ]));
     }
 
     public function createUser(string $name, string $email): array
     {
-        return $this->executor->execute(function () use ($name, $email) {
-            Log::info('grpc request started', [
-                'rpc.service' => 'user.v1.UserService',
-                'rpc.method' => 'CreateUser',
-                'user.email' => $email,
-                'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-            ]);
+        return Span::run('laravel.grpc.user_service.create_user.total', function () use ($name, $email) {
+            return $this->executor->execute(function () use ($name, $email) {
+                $overallStart = microtime(true);
 
-            $request = new CreateUserRequest();
-            $request->setName($name);
-            $request->setEmail($email);
-
-            [$response, $status] = $this->client->CreateUser($request, $this->metadata())->wait();
-
-            if ($status->code !== \Grpc\STATUS_OK) {
-                Log::warning('grpc request failed', [
+                Log::info('grpc request started', $this->contextMeta([
                     'rpc.service' => 'user.v1.UserService',
                     'rpc.method' => 'CreateUser',
                     'user.email' => $email,
-                    'grpc.status_code' => $status->code,
-                    'grpc.error' => $status->details,
-                    'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                    'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-                ]);
+                ]));
 
-                return [
-                    'ok' => false,
-                    'error' => $status->details,
-                    'code' => $status->code,
-                ];
-            }
+                $metadataStart = microtime(true);
+                $metadata = Span::run('laravel.grpc.user_service.create_user.metadata', fn () => $this->metadata());
+                $metadataMs = $this->elapsedMs($metadataStart);
 
-            $user = $response->getUser();
+                $requestBuildStart = microtime(true);
+                $request = Span::run('laravel.grpc.user_service.create_user.build_request', function () use ($name, $email) {
+                    $request = new CreateUserRequest();
+                    $request->setName($name);
+                    $request->setEmail($email);
 
-            Log::info('grpc request completed', [
-                'rpc.service' => 'user.v1.UserService',
-                'rpc.method' => 'CreateUser',
-                'user.id' => $user?->getId(),
-                'user.email' => $user?->getEmail(),
-                'grpc.status_code' => \Grpc\STATUS_OK,
-                'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
-                'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
-            ]);
+                    return $request;
+                });
+                $requestBuildMs = $this->elapsedMs($requestBuildStart);
 
-            return [
-                'ok' => true,
-                'data' => [
-                    'id' => $user->getId(),
-                    'name' => $user->getName(),
-                    'email' => $user->getEmail(),
-                    'status' => $user->getStatus(),
-                ],
-            ];
-        });
+                $grpcCallStart = microtime(true);
+                [$response, $status] = Span::run(
+                    'laravel.grpc.user_service.create_user.call',
+                    fn () => $this->client->CreateUser($request, $metadata)->wait(),
+                    $this->contextMeta([
+                        'rpc.service' => 'user.v1.UserService',
+                        'rpc.method' => 'CreateUser',
+                    ])
+                );
+                $grpcCallMs = $this->elapsedMs($grpcCallStart);
+
+                if ($status->code !== \Grpc\STATUS_OK) {
+                    Log::warning('grpc request failed', $this->contextMeta([
+                        'rpc.service' => 'user.v1.UserService',
+                        'rpc.method' => 'CreateUser',
+                        'user.email' => $email,
+                        'grpc.status_code' => $status->code,
+                        'grpc.error' => $status->details,
+                        'latency_breakdown_ms' => [
+                            'metadata' => $metadataMs,
+                            'request_build' => $requestBuildMs,
+                            'grpc_call' => $grpcCallMs,
+                            'total' => $this->elapsedMs($overallStart),
+                        ],
+                    ]));
+
+                    return [
+                        'ok' => false,
+                        'error' => $status->details,
+                        'code' => $status->code,
+                    ];
+                }
+
+                $mapStart = microtime(true);
+                $result = Span::run('laravel.grpc.user_service.create_user.map_response', function () use ($response) {
+                    $user = $response->getUser();
+
+                    return [
+                        'ok' => true,
+                        'data' => [
+                            'id' => $user->getId(),
+                            'name' => $user->getName(),
+                            'email' => $user->getEmail(),
+                            'status' => $user->getStatus(),
+                        ],
+                    ];
+                });
+                $mapMs = $this->elapsedMs($mapStart);
+
+                Log::info('grpc request completed', $this->contextMeta([
+                    'rpc.service' => 'user.v1.UserService',
+                    'rpc.method' => 'CreateUser',
+                    'user.id' => $result['data']['id'] ?? null,
+                    'user.email' => $result['data']['email'] ?? $email,
+                    'grpc.status_code' => \Grpc\STATUS_OK,
+                    'latency_breakdown_ms' => [
+                        'metadata' => $metadataMs,
+                        'request_build' => $requestBuildMs,
+                        'grpc_call' => $grpcCallMs,
+                        'response_map' => $mapMs,
+                        'total' => $this->elapsedMs($overallStart),
+                    ],
+                ]));
+
+                return $result;
+            });
+        }, $this->contextMeta([
+            'rpc.service' => 'user.v1.UserService',
+            'rpc.method' => 'CreateUser',
+            'user.email' => $email,
+        ]));
     }
 }

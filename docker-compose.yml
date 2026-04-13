@@ -53,10 +53,13 @@ services:
       REDIS_HOST: ${REDIS_HOST}
       REDIS_PORT: ${REDIS_PORT}
       RABBITMQ_URL: ${RABBITMQ_URL}
+      OTEL_SERVICE_NAME: grpc-user-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:${OTEL_HTTP_PORT}
     depends_on:
       - postgres
       - redis
       - rabbitmq
+      - jaeger
     ports:
       - "${GRPC_USER_SERVICE_PORT}:${GRPC_USER_SERVICE_PORT}"
       - "${GRPC_METRICS_PORT}:${GRPC_METRICS_PORT}"

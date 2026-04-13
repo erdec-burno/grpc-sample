@@ -1,31 +1,27 @@
 # grpc-sample
 
-## Конфигурация
+Локальный пример микросервисного окружения с:
+- Laravel + Nginx
+- gRPC user-service (Node.js)
+- PostgreSQL, Redis, RabbitMQ
+- Observability: Jaeger, Prometheus, Grafana
 
-Проект использует один общий файл окружения: `/.env` в корне репозитория.
+## Быстрый старт
 
-Он используется одновременно:
-- `docker compose` для подстановки переменных в `docker-compose.yml`
-- Laravel-приложением в `laravel` для CLI и HTTP runtime
-
-Что важно:
-- основной файл конфигурации: `D:\repos\grpc-sample\.env`
-- шаблон для нового окружения: `D:\repos\grpc-sample\.env.example`
-- файл `laravel/.env` больше не используется
-
-Если нужно поднять проект с нуля:
-1. Скопируй `/.env.example` в `/.env`, если файла ещё нет.
-2. При необходимости измени порты, доступы и хосты в `/.env`.
-3. Запусти `docker compose up --build` из корня репозитория.
-
-## Генерация контракта
+1. Подготовьте `.env` (см. переменные в `docker-compose.yml`).
+2. Запустите окружение:
 
 ```bash
-MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" docker run --rm \
-  -v "D:/repos/grpc-sample:/defs" \
-  namely/protoc-all \
-  -i /defs/contracts \
-  -f user/v1/user.proto \
-  -l php \
-  -o /defs/laravel/app/Grpc
+docker compose up --build
 ```
+
+## Jaeger tracing
+
+Для `grpc-user-service` включён экспорт трейсов через OTLP HTTP.
+
+Переменные окружения сервиса:
+- `OTEL_SERVICE_NAME` — имя сервиса в трейcах (по умолчанию `grpc-user-service`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — базовый OTLP endpoint (например, `http://jaeger:4318`)
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` — полный URL для traces (если задан, имеет приоритет)
+
+Jaeger UI доступен на порту `${JAEGER_UI_PORT}` (по умолчанию обычно `16686`).

@@ -1,32 +1,50 @@
 const { NodeSDK } = require('@opentelemetry/sdk-node');
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
-const { resourceFromAttributes } = require('@opentelemetry/resources');
+const { Resource } = require('@opentelemetry/resources');
 const { SemanticResourceAttributes } = require('@opentelemetry/semantic-conventions');
 
 const serviceName = process.env.OTEL_SERVICE_NAME || 'grpc-user-service';
-const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://jaeger:4318';
-const tracesEndpoint =
-  process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ||
-  `${otlpEndpoint.replace(/\/$/, '')}/v1/traces`;
+const otlpBaseEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+const tracesEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+  || (otlpBaseEndpoint ? `${otlpBaseEndpoint.replace(/\/$/, '')}/v1/traces` : null);
 
-const traceExporter = new OTLPTraceExporter({
-  url: tracesEndpoint,
-});
+const tracingEnabled = process.env.OTEL_TRACING_ENABLED !== 'false' && Boolean(tracesEndpoint);
 
-const sdk = new NodeSDK({
-  traceExporter,
-  resource: resourceFromAttributes({
-    [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-  }),
-});
+const sdk = tracingEnabled
+  ? new NodeSDK({
+      traceExporter: new OTLPTraceExporter({
+        url: tracesEndpoint,
+      }),
+      resource: new Resource({
+        [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
+      }),
+    })
+  : null;
 
 async function startTracing() {
-  await sdk.start();
-  console.log(`OpenTelemetry tracing enabled: ${serviceName} -> ${tracesEndpoint}`);
+  if (!tracingEnabled) {
+    console.log(`OpenTelemetry tracing disabled for ${serviceName}`);
+    return;
+  }
+
+  try {
+    await sdk.start();
+    console.log(`OpenTelemetry tracing enabled: ${serviceName} -> ${tracesEndpoint}`);
+  } catch (error) {
+    console.warn('OpenTelemetry tracing startup failed, continuing without tracing', error);
+  }
 }
 
 async function stopTracing() {
-  await sdk.shutdown();
+  if (!sdk) {
+    return;
+  }
+
+  try {
+    await sdk.shutdown();
+  } catch (error) {
+    console.warn('OpenTelemetry tracing shutdown failed', error);
+  }
 }
 
 module.exports = {

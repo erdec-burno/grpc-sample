@@ -13,7 +13,7 @@ class UserGrpcService
     public function __construct()
     {
         $this->client = new UserServiceClient(
-            env('GRPC_USER_SERVICE_HOST', 'grpc-user-service:50051'),
+            config('services.grpc.user_service_host', env('GRPC_USER_SERVICE_HOST', 'grpc-user-service:50051')),
             [
                 'credentials' => ChannelCredentials::createInsecure(),
             ]

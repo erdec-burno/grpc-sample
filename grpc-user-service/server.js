@@ -6,7 +6,15 @@ const grpcObj = grpc.loadPackageDefinition(packageDef);
 const userPackage = grpcObj.user.v1;
 
 const users = new Map();
-let idCounter = 1;
+
+users.set(1, {
+  id: 1,
+  name: 'John',
+  email: 'john@test.com',
+  status: 1,
+});
+
+let idCounter = 2;
 
 const server = new grpc.Server();
 

@@ -8,3 +8,4 @@
 /.codex/
 /.agents/
 /laravel/vendor/
+/grpc-user-service/node_modules/

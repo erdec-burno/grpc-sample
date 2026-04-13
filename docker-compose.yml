@@ -26,6 +26,10 @@ services:
       APP_ENV: local
       APP_DEBUG: "true"
       APP_URL: http://localhost:8080
+      APP_KEY: base64:w+YcxuUCbt3nf8SHicFnXjMK/o9WhB1tVbLUoNgQjAA=
+      SESSION_DRIVER: file
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432
@@ -144,3 +148,4 @@ volumes:
 networks:
   backend:
     driver: bridge
+

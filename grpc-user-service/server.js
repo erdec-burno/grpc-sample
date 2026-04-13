@@ -6,6 +6,7 @@ const { startTracing, stopTracing } = require('./tracing');
 const packageDef = protoLoader.loadSync('../contracts/user/v1/user.proto');
 const grpcObj = grpc.loadPackageDefinition(packageDef);
 const userPackage = grpcObj.user.v1;
+const port = Number(process.env.PORT || 50051);
 
 const users = new Map();
 let idCounter = 1;
@@ -72,9 +73,12 @@ server.addService(userPackage.UserService.service, {
 async function main() {
   await startTracing();
 
-  server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), () => {
-    console.log('gRPC server running on port 50051');
-    server.start();
+  server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (error) => {
+    if (error) {
+      throw error;
+    }
+
+    console.log(`gRPC server running on port ${port}`);
   });
 }
 

@@ -21,6 +21,9 @@ services:
     working_dir: /var/www/html
     env_file:
       - ./.env
+    environment:
+      OTEL_SERVICE_NAME: laravel-app
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:${OTEL_HTTP_PORT}
     volumes:
       - ./laravel:/var/www/html
       - ./.env:/var/www/html/.env:ro

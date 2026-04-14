@@ -8,6 +8,8 @@ use App\Support\Grpc\RetryPolicy;
 use App\Support\Tracing\Span;
 use Grpc\ChannelCredentials;
 use Illuminate\Support\Facades\Log;
+use OpenTelemetry\API\Globals;
+use OpenTelemetry\Context\Propagation\ArrayAccessGetterSetter;
 use User\V1\CreateUserRequest;
 use User\V1\GetUserRequest;
 use User\V1\UserServiceClient;
@@ -33,8 +35,11 @@ class UserGrpcService
 
     private function contextMeta(array $meta = []): array
     {
+        $carrier = [];
+        Globals::propagator()->inject($carrier, ArrayAccessGetterSetter::getInstance());
+
         return [
-            'traceparent' => app()->bound('traceparent') ? app('traceparent') : null,
+            'traceparent' => $carrier['traceparent'] ?? (app()->bound('traceparent') ? app('traceparent') : null),
             'correlation_id' => app()->bound('correlation_id') ? app('correlation_id') : null,
             ...$meta,
         ];
@@ -42,10 +47,16 @@ class UserGrpcService
 
     private function metadata(): array
     {
+        $carrier = [];
+        Globals::propagator()->inject($carrier, ArrayAccessGetterSetter::getInstance());
         $metadata = [];
 
-        if (app()->bound('traceparent')) {
-            $metadata['traceparent'] = [app('traceparent')];
+        if (isset($carrier['traceparent'])) {
+            $metadata['traceparent'] = [$carrier['traceparent']];
+        }
+
+        if (isset($carrier['tracestate'])) {
+            $metadata['tracestate'] = [$carrier['tracestate']];
         }
 
         if (app()->bound('correlation_id')) {

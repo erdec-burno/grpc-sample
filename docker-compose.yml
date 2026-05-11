@@ -47,6 +47,7 @@ services:
     volumes:
       - ./grpc-user-service:/app
       - ./contracts:/contracts
+      - grpc_user_service_node_modules:/app/node_modules
     environment:
       PORT: ${GRPC_USER_SERVICE_PORT}
       DB_HOST: ${DB_HOST}
@@ -155,6 +156,7 @@ volumes:
   postgres_data:
   redis_data:
   grafana_data:
+  grpc_user_service_node_modules:
 
 networks:
   backend:

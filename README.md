@@ -46,9 +46,12 @@ Observability-поток:
 
 - `POST /users`
 - `GET /users/{id}`
+- `GET /healthz`
+- `GET /readyz`
 - Laravel как gRPC-клиент
 - `grpc-user-service` с хранением users в Postgres
 - сквозной tracing между Laravel и `grpc-user-service`
+- healthchecks и readiness в Docker Compose
 - `Jaeger`, `Prometheus`, `Grafana` в составе стенда
 
 Что важно понимать:
@@ -94,13 +97,49 @@ docker compose up --build -d
 curl http://localhost:8080/users/1
 ```
 
-4. Создайте пользователя:
+4. Проверьте health endpoints:
+
+```bash
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl http://localhost:9464/healthz
+curl http://localhost:9464/readyz
+```
+
+5. Создайте пользователя:
 
 ```bash
 curl -X POST http://localhost:8080/users \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"Alice\",\"email\":\"alice@example.com\"}"
 ```
+
+## Healthchecks
+
+Laravel:
+
+- `GET /healthz` — liveness
+- `GET /readyz` — readiness
+
+`/readyz` проверяет:
+- доступность Postgres
+- доступность `grpc-user-service`
+
+gRPC user-service:
+
+- `GET /healthz` на порту `${GRPC_METRICS_PORT}` — liveness
+- `GET /readyz` на порту `${GRPC_METRICS_PORT}` — readiness
+
+`/readyz` проверяет:
+- что gRPC server уже поднят
+- что Postgres отвечает
+
+Docker Compose использует healthchecks для:
+
+- `postgres`
+- `grpc-user-service`
+- `laravel-app`
+- `nginx`
 
 ## Observability
 
@@ -126,3 +165,4 @@ Grafana по умолчанию:
 - `grpc-user-service` использует отдельную таблицу `grpc_users`, а не Laravel-таблицу `users`
 - если меняются зависимости Node-сервиса, контейнер `grpc-user-service` нужно пересобирать
 - для `grpc-user-service` в Compose выделен отдельный volume под `/app/node_modules`, чтобы bind mount с кодом не затирал контейнерные зависимости
+- `nginx` зависит от healthy-состояния `laravel-app`, а `laravel-app` — от healthy-состояния `postgres` и `grpc-user-service`

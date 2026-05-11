@@ -23,6 +23,8 @@
 Рабочие маршруты:
 - `GET /users/{id}`
 - `POST /users`
+- `GET /healthz`
+- `GET /readyz`
 
 Файл: `laravel/routes/web.php`
 
@@ -82,6 +84,21 @@ Laravel реально вызывает gRPC-клиент:
 - `infra/otel-collector/config.yml`
 - `infra/prometheus/prometheus.yml`
 
+### 7. Healthchecks и readiness добавлены
+
+Сейчас есть:
+- `Laravel /healthz`
+- `Laravel /readyz`
+- `grpc-user-service /healthz`
+- `grpc-user-service /readyz`
+- `healthcheck` секции в `docker-compose.yml`
+
+Что проверяется:
+- `laravel-app` — доступность `php-fpm`
+- `grpc-user-service` — readiness через HTTP endpoint на `${GRPC_METRICS_PORT}`
+- `postgres` — через `pg_isready`
+- `nginx` стартует после `healthy` состояния `laravel-app`
+
 ## Работает, но с ограничением
 
 ### 1. Laravel — это gateway, а не полноценный user backend
@@ -121,7 +138,6 @@ Laravel реально вызывает gRPC-клиент:
 
 При этом проект ещё не доведён до полноценной платформенной схемы, потому что:
 - `Redis` и `RabbitMQ` не участвуют в основном users-flow как first-class компоненты
-- healthchecks и readiness пока не формализованы
 - основной сценарий ещё слабо прикрыт автотестами
 
 ## Короткий итог
@@ -131,7 +147,7 @@ Laravel реально вызывает gRPC-клиент:
 
 Проект пока не доведён как:
 - сценарий с реальным использованием Redis/RabbitMQ в users pipeline
-- стенд с формализованными healthchecks, тестами и эксплуатационной документацией
+- стенд с тестами и полной эксплуатационной документацией
 
 ## Что делать дальше
 
@@ -152,16 +168,7 @@ Laravel реально вызывает gRPC-клиент:
 
 Без этого contracts слой со временем начнёт расходиться между сервисами.
 
-### 3. Добавить healthcheck и readiness
-
-Минимум:
-- HTTP health endpoint в Laravel
-- gRPC health endpoint или отдельный health server в `grpc-user-service`
-- healthchecks в `docker-compose.yml`
-
-Это упростит локальный запуск и диагностику зависимостей.
-
-### 4. Зафиксировать сценарий observability
+### 3. Зафиксировать сценарий observability
 
 Нужно явно описать:
 - какие spans считаются основными
@@ -170,7 +177,7 @@ Laravel реально вызывает gRPC-клиент:
 
 Технически tracing уже есть, но без формализованного сценария им сложно пользоваться как инструментом диагностики.
 
-### 5. Добавить автоматические тесты по основному потоку
+### 4. Добавить автоматические тесты по основному потоку
 
 Минимум:
 - feature-тесты Laravel на `GET /users/{id}` и `POST /users`
@@ -179,12 +186,13 @@ Laravel реально вызывает gRPC-клиент:
 
 Сейчас проект больше похож на интеграционный стенд, чем на систему с защищённым поведением.
 
-### 6. Привести документацию к реальному состоянию проекта
+### 5. Привести документацию к реальному состоянию проекта
 
 Стоит явно задокументировать:
 - что Laravel — это gateway
 - что user-service использует таблицу `grpc_users`
 - как поднимать проект
+- как работают health endpoints и healthchecks
 - как проверять tracing
 - какие сервисы реально участвуют в users-flow
 

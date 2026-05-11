@@ -4,13 +4,20 @@ services:
   nginx:
     image: nginx:1.27-alpine
     depends_on:
-      - laravel-app
+      laravel-app:
+        condition: service_healthy
     ports:
       - "${NGINX_PORT}:80"
     volumes:
       - ./laravel:/var/www/html
       - ./.env:/var/www/html/.env:ro
       - ./laravel/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - backend
 
@@ -28,14 +35,25 @@ services:
       - ./laravel:/var/www/html
       - ./.env:/var/www/html/.env:ro
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
-      - grpc-user-service
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      grpc-user-service:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     command: php-fpm
     ports:
       - "${PHP_FPM_PORT}:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 9000) ? 0 : 1);'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     networks:
       - backend
 
@@ -61,13 +79,23 @@ services:
       OTEL_SERVICE_NAME: grpc-user-service
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+      otel-collector:
+        condition: service_started
     ports:
       - "${GRPC_USER_SERVICE_PORT}:${GRPC_USER_SERVICE_PORT}"
       - "${GRPC_METRICS_PORT}:${GRPC_METRICS_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GRPC_METRICS_PORT}/readyz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
     networks:
       - backend
 
@@ -81,6 +109,12 @@ services:
       - "${POSTGRES_EXPOSE_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - backend
 

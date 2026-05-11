@@ -1,0 +1,32 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+connectors:
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [100us, 1ms, 2ms, 6ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s]
+    aggregation_temporality: AGGREGATION_TEMPORALITY_CUMULATIVE
+    metrics_flush_interval: 15s
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [spanmetrics, otlp/jaeger]
+    metrics/spanmetrics:
+      receivers: [spanmetrics]
+      exporters: [prometheus]

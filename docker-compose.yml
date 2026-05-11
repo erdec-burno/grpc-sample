@@ -21,6 +21,9 @@ services:
     working_dir: /var/www/html
     env_file:
       - ./.env
+    environment:
+      OTEL_SERVICE_NAME: laravel-app
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes:
       - ./laravel:/var/www/html
       - ./.env:/var/www/html/.env:ro
@@ -29,6 +32,7 @@ services:
       - redis
       - rabbitmq
       - grpc-user-service
+      - otel-collector
     command: php-fpm
     ports:
       - "${PHP_FPM_PORT}:9000"
@@ -54,12 +58,12 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       RABBITMQ_URL: ${RABBITMQ_URL}
       OTEL_SERVICE_NAME: grpc-user-service
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:${OTEL_HTTP_PORT}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       - postgres
       - redis
       - rabbitmq
-      - jaeger
+      - otel-collector
     ports:
       - "${GRPC_USER_SERVICE_PORT}:${GRPC_USER_SERVICE_PORT}"
       - "${GRPC_METRICS_PORT}:${GRPC_METRICS_PORT}"
@@ -98,10 +102,31 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:1.57
+    environment:
+      METRICS_STORAGE_TYPE: prometheus
+      PROMETHEUS_SERVER_URL: http://prometheus:9090
+      PROMETHEUS_QUERY_NORMALIZE_CALLS: "true"
+      PROMETHEUS_QUERY_NORMALIZE_DURATION: "true"
+    command:
+      - "--prometheus.query.support-spanmetrics-connector=true"
     ports:
       - "${JAEGER_UI_PORT}:16686"
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command:
+      - "--config=/etc/otelcol-contrib/config.yml"
+    ports:
       - "${OTEL_GRPC_PORT}:4317"
       - "${OTEL_HTTP_PORT}:4318"
+    volumes:
+      - ./infra/otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+    depends_on:
+      - jaeger
     networks:
       - backend
 

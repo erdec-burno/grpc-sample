@@ -43,6 +43,10 @@ async function createUser({ name, email, status = 1 }) {
   return result.rows[0];
 }
 
+async function ping() {
+  await pool.query('SELECT 1');
+}
+
 async function closePool() {
   await pool.end();
 }
@@ -51,5 +55,6 @@ module.exports = {
   initSchema,
   getUserById,
   createUser,
+  ping,
   closePool,
 };

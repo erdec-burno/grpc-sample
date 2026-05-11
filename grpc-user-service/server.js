@@ -1,15 +1,20 @@
 const grpc = require('@grpc/grpc-js');
+const http = require('http');
 const protoLoader = require('@grpc/proto-loader');
 const { context, propagation, trace, SpanStatusCode } = require('@opentelemetry/api');
-const { createUser, getUserById, initSchema, closePool } = require('./db');
+const { createUser, getUserById, initSchema, ping, closePool } = require('./db');
 const { startTracing, stopTracing } = require('./tracing');
 
 const packageDef = protoLoader.loadSync('../contracts/user/v1/user.proto');
 const grpcObj = grpc.loadPackageDefinition(packageDef);
 const userPackage = grpcObj.user.v1;
 const port = Number(process.env.PORT || 50051);
+const healthPort = Number(process.env.HEALTH_PORT || process.env.METRICS_PORT || process.env.GRCP_METRICS_PORT || process.env.GRPC_METRICS_PORT || 9464);
 
 const server = new grpc.Server();
+let grpcServerReady = false;
+let shuttingDown = false;
+let healthServer;
 const tracer = trace.getTracer('grpc-user-service');
 const metadataGetter = {
   keys(carrier) {
@@ -120,6 +125,60 @@ async function withRpcSpan(call, spanName, attributes, handler) {
         span.end();
       }
     });
+  });
+}
+
+function writeJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify(payload));
+}
+
+function startHealthServer() {
+  healthServer = http.createServer(async (request, response) => {
+    if (request.url === '/healthz') {
+      return writeJson(response, 200, {
+        status: 'ok',
+        service: 'grpc-user-service',
+      });
+    }
+
+    if (request.url === '/readyz') {
+      if (shuttingDown || !grpcServerReady) {
+        return writeJson(response, 503, {
+          status: 'not_ready',
+          service: 'grpc-user-service',
+        });
+      }
+
+      try {
+        await ping();
+
+        return writeJson(response, 200, {
+          status: 'ready',
+          service: 'grpc-user-service',
+          checks: {
+            grpc_server: 'ok',
+            postgres: 'ok',
+          },
+        });
+      } catch (error) {
+        return writeJson(response, 503, {
+          status: 'not_ready',
+          service: 'grpc-user-service',
+          checks: {
+            grpc_server: 'ok',
+            postgres: 'failed',
+          },
+          error: error.message,
+        });
+      }
+    }
+
+    return writeJson(response, 404, { error: 'Not found' });
+  });
+
+  healthServer.listen(healthPort, '0.0.0.0', () => {
+    console.log(`Health server running on port ${healthPort}`);
   });
 }
 
@@ -311,17 +370,22 @@ server.addService(userPackage.UserService.service, {
 async function main() {
   await startTracing();
   await initSchema();
+  startHealthServer();
 
   server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (error) => {
     if (error) {
       throw error;
     }
 
+    grpcServerReady = true;
     console.log(`gRPC server running on port ${port}`);
   });
 }
 
 process.on('SIGTERM', async () => {
+  shuttingDown = true;
+  grpcServerReady = false;
+  healthServer?.close();
   server.tryShutdown(() => {
     closePool()
       .catch((error) => console.warn('Failed to close Postgres pool', error))
@@ -332,6 +396,9 @@ process.on('SIGTERM', async () => {
 });
 
 process.on('SIGINT', async () => {
+  shuttingDown = true;
+  grpcServerReady = false;
+  healthServer?.close();
   server.tryShutdown(() => {
     closePool()
       .catch((error) => console.warn('Failed to close Postgres pool', error))

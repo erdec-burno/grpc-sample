@@ -37,6 +37,8 @@ Laravel реально вызывает gRPC-клиент:
 
 Файл: `grpc-user-service/server.js`
 
+Сейчас users хранятся в Postgres через таблицу `grpc_users`.
+
 ### 4. Сквозной tracing уже встроен
 
 Сейчас есть:
@@ -63,9 +65,9 @@ Laravel реально вызывает gRPC-клиент:
 - `total`
 
 В Node:
-- `user_lookup`
+- `db_query`
 - `user_build`
-- `user_store`
+- `db_insert`
 - `total`
 
 ### 6. Observability stack подключена
@@ -82,24 +84,7 @@ Laravel реально вызывает gRPC-клиент:
 
 ## Работает, но с ограничением
 
-### 1. `grpc-user-service` не использует Postgres как хранилище users
-
-Сейчас users хранятся в памяти:
-
-```js
-const users = new Map();
-```
-
-Файл: `grpc-user-service/server.js`
-
-Следствия:
-- после рестарта данные пропадают
-- `CreateUser` не пишет в БД
-- `GetUser` не читает из БД
-
-Это главный функциональный предел текущего проекта.
-
-### 2. Laravel — это gateway, а не полноценный user backend
+### 1. Laravel — это gateway, а не полноценный user backend
 
 Он:
 - валидирует HTTP
@@ -113,7 +98,7 @@ const users = new Map();
 
 ### 1. Postgres
 
-Поднят и доступен, но в потоке `/users` сейчас почти не участвует.
+Поднят и уже участвует в основном users-flow через `grpc-user-service`.
 
 ### 2. Redis
 
@@ -134,32 +119,23 @@ const users = new Map();
 - distributed tracing
 - локальная observability-инфраструктура
 
-Но он ещё не доведён до полноценного persistence-oriented микросервиса, потому что:
-- user-service пока in-memory
-- Postgres/Redis/RabbitMQ не участвуют в основном сценарии users как first-class компоненты
+При этом проект ещё не доведён до полноценной платформенной схемы, потому что:
+- `Redis` и `RabbitMQ` не участвуют в основном users-flow как first-class компоненты
+- healthchecks и readiness пока не формализованы
+- основной сценарий ещё слабо прикрыт автотестами
 
 ## Короткий итог
 
 Проект реально рабочий как:
-- demo стенд интеграции Laravel + gRPC + tracing
+- рабочий стенд интеграции Laravel + gRPC + Postgres + tracing
 
 Проект пока не доведён как:
-- полноценный user-service с хранением в Postgres
 - сценарий с реальным использованием Redis/RabbitMQ в users pipeline
+- стенд с формализованными healthchecks, тестами и эксплуатационной документацией
 
 ## Что делать дальше
 
-### 1. Перевести `grpc-user-service` с in-memory хранения на Postgres
-
-Минимальный набор:
-- добавить реальное подключение к Postgres в `grpc-user-service`
-- создать таблицу `users`
-- переписать `CreateUser` на `INSERT`
-- переписать `GetUser` на `SELECT`
-
-Это главный шаг, который превратит users-flow из demo в рабочий сервис.
-
-### 2. Развести роли Redis и RabbitMQ
+### 1. Развести роли Redis и RabbitMQ
 
 Нужно явно определить, зачем они в проекте:
 - `Redis` как cache, session store или rate limiting backend
@@ -167,7 +143,7 @@ const users = new Map();
 
 Сейчас эти сервисы подняты, но их роль в основном сценарии не закреплена.
 
-### 3. Формализовать protobuf workflow
+### 2. Формализовать protobuf workflow
 
 Имеет смысл закрепить:
 - где лежит canonical `.proto`
@@ -176,7 +152,7 @@ const users = new Map();
 
 Без этого contracts слой со временем начнёт расходиться между сервисами.
 
-### 4. Добавить healthcheck и readiness
+### 3. Добавить healthcheck и readiness
 
 Минимум:
 - HTTP health endpoint в Laravel
@@ -185,7 +161,7 @@ const users = new Map();
 
 Это упростит локальный запуск и диагностику зависимостей.
 
-### 5. Зафиксировать сценарий observability
+### 4. Зафиксировать сценарий observability
 
 Нужно явно описать:
 - какие spans считаются основными
@@ -194,7 +170,7 @@ const users = new Map();
 
 Технически tracing уже есть, но без формализованного сценария им сложно пользоваться как инструментом диагностики.
 
-### 6. Добавить автоматические тесты по основному потоку
+### 5. Добавить автоматические тесты по основному потоку
 
 Минимум:
 - feature-тесты Laravel на `GET /users/{id}` и `POST /users`
@@ -203,11 +179,11 @@ const users = new Map();
 
 Сейчас проект больше похож на интеграционный стенд, чем на систему с защищённым поведением.
 
-### 7. Привести документацию к реальному состоянию проекта
+### 6. Привести документацию к реальному состоянию проекта
 
 Стоит явно задокументировать:
 - что Laravel — это gateway
-- что user-service сейчас in-memory или уже на Postgres
+- что user-service использует таблицу `grpc_users`
 - как поднимать проект
 - как проверять tracing
 - какие сервисы реально участвуют в users-flow
